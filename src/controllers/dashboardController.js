@@ -80,61 +80,63 @@ export const getDashboardSummary = asyncHandler(async (req, res, next) => {
 });
 
 export const getMonthlySales = asyncHandler(async (req, res, next) => {
-  const now = new Date();
-  const yearStart = startOfYear(now);
-  const yearEnd = endOfYear(now);
-  
-  const salesByMonth = await Order.aggregate([
+  const monthParam = parseInt(req.query.month) || new Date().getMonth() + 1;
+  const yearParam = parseInt(req.query.year) || new Date().getFullYear();
+
+  const monthStart = startOfMonth(new Date(yearParam, monthParam - 1));
+  const monthEnd = endOfMonth(new Date(yearParam, monthParam - 1));
+
+  const salesByDay = await Order.aggregate([
     {
       $match: {
         createdAt: {
-          $gte: yearStart,
-          $lte: yearEnd,
+          $gte: monthStart,
+          $lte: monthEnd,
         }
       }
     },
     {
       $group: {
-        _id: { $month: "$createdAt" },
+        _id: { $dayOfMonth: "$createdAt" },
         totalSales: { $sum: "$total" },
+        orderCount: { $sum: 1 }
       }
     },
     {
       $sort: { "_id": 1 }
     }
   ]);
-  
-  // Map numeric month to month name
-  const months = [
-    "Jan", "Feb", "Mar", "Apr", "May", "Jun",
-    "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"
-  ];
-  
-  const formatted = Array.from({ length: 12 }, (_, i) => {
-    const monthData = salesByMonth.find(item => item._id === i + 1);
+
+  const daysInMonth = new Date(yearParam, monthParam, 0).getDate();
+
+  const formatted = Array.from({ length: daysInMonth }, (_, i) => {
+    const day = i + 1;
+    const dayData = salesByDay.find(item => item._id === day);
     return {
-      month: months[i],
-      totalSales: monthData ? monthData.totalSales : 0
+      day: day.toString(),
+      date: `${yearParam}-${monthParam.toString().padStart(2, '0')}-${day.toString().padStart(2, '0')}`,
+      totalSales: dayData ? dayData.totalSales : 0,
+      orderCount: dayData ? dayData.orderCount : 0
     };
   });
-  
-  // Check if export to CSV is requested
+
   if (req.query.export === 'csv') {
-    const fields = ['month', 'totalSales'];
+    const fields = ['date', 'day', 'totalSales', 'orderCount'];
     const json2csvParser = new Parser({ fields });
     const csv = json2csvParser.parse(formatted);
-    
     res.header('Content-Type', 'text/csv');
-    res.attachment('monthly_sales.csv');
+    res.attachment(`daily_sales_${yearParam}_${monthParam}.csv`);
     return res.send(csv);
   }
-  
+
   res.status(200).json({
     success: true,
-    message: "Monthly sales data fetched successfully",
+    message: `Daily sales data for ${monthParam}/${yearParam} fetched successfully`,
     data: formatted
   });
 });
+
+
 
 export const getWeeklySales = asyncHandler(async (req, res, next) => {
   const now = new Date();
@@ -190,23 +192,23 @@ export const getWeeklySales = asyncHandler(async (req, res, next) => {
 });
 
 export const getYearlySales = asyncHandler(async (req, res, next) => {
-  // Get the range of years to report (default to last 5 years)
-  const years = parseInt(req.query.years) || 5;
-  const currentYear = new Date().getFullYear();
-  const startYear = currentYear - years + 1;
-  
-  const salesByYear = await Order.aggregate([
+  const yearParam = parseInt(req.query.year) || new Date().getFullYear();
+
+  const yearStart = startOfYear(new Date(yearParam, 0));
+  const yearEnd = endOfYear(new Date(yearParam, 11));
+
+  const salesByMonth = await Order.aggregate([
     {
       $match: {
         createdAt: {
-          $gte: new Date(`${startYear}-01-01`),
-          $lte: new Date(`${currentYear}-12-31`)
+          $gte: yearStart,
+          $lte: yearEnd
         }
       }
     },
     {
       $group: {
-        _id: { $year: "$createdAt" },
+        _id: { $month: "$createdAt" },
         totalSales: { $sum: "$total" },
         orderCount: { $sum: 1 }
       }
@@ -215,35 +217,36 @@ export const getYearlySales = asyncHandler(async (req, res, next) => {
       $sort: { "_id": 1 }
     }
   ]);
-  
-  // Format the results
-  const formatted = Array.from({ length: years }, (_, i) => {
-    const year = startYear + i;
-    const yearData = salesByYear.find(item => item._id === year);
+
+  const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", 
+                  "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+
+  const formatted = Array.from({ length: 12 }, (_, i) => {
+    const monthData = salesByMonth.find(item => item._id === i + 1);
     return {
-      year: year.toString(),
-      totalSales: yearData ? yearData.totalSales : 0,
-      orderCount: yearData ? yearData.orderCount : 0
+      month: months[i],
+      totalSales: monthData ? monthData.totalSales : 0,
+      orderCount: monthData ? monthData.orderCount : 0
     };
   });
-  
-  // Check if export to CSV is requested
+
   if (req.query.export === 'csv') {
-    const fields = ['year', 'totalSales', 'orderCount'];
+    const fields = ['month', 'totalSales', 'orderCount'];
     const json2csvParser = new Parser({ fields });
     const csv = json2csvParser.parse(formatted);
-    
     res.header('Content-Type', 'text/csv');
-    res.attachment('yearly_sales.csv');
+    res.attachment(`monthly_sales_${yearParam}.csv`);
     return res.send(csv);
   }
-  
+
   res.status(200).json({
     success: true,
-    message: "Yearly sales data fetched successfully",
+    message: `Monthly sales data for year ${yearParam} fetched successfully`,
     data: formatted
   });
 });
+
+
 
 export const getDailySales = asyncHandler(async (req, res, next) => {
   // Get month and year from query or use current month/year
@@ -408,209 +411,91 @@ export const getTopProductsByDay = asyncHandler(async (req, res, next) => {
 });
 
 export const getTopProductsByMonth = asyncHandler(async (req, res, next) => {
-  // Get month and year from query or use current month/year
-  const monthParam = parseInt(req.query.month) || new Date().getMonth() + 1;
-  const yearParam = parseInt(req.query.year) || new Date().getFullYear();
-  
-  const monthStart = startOfMonth(new Date(yearParam, monthParam - 1));
-  const monthEnd = endOfMonth(new Date(yearParam, monthParam - 1));
-  
-  // Number of top products to return
-  const limit = parseInt(req.query.limit) || 10;
-  
-  // Get top products for the specified month
-  const topProducts = await Order.aggregate([
+  const month = parseInt(req.query.month) || new Date().getMonth() + 1;
+  const year = parseInt(req.query.year) || new Date().getFullYear();
+  const start = startOfMonth(new Date(year, month - 1));
+  const end = endOfMonth(new Date(year, month - 1));
+
+  const result = await Order.aggregate([
     {
       $match: {
-        createdAt: { $gte: monthStart, $lte: monthEnd }
-      }
+        createdAt: { $gte: start, $lte: end },
+      },
     },
-    {
-      $unwind: "$items"
-    },
+    { $unwind: "$items" },
     {
       $addFields: {
-        "itemTotalPrice": {
-          $add: [
-            "$items.price",
-            { $sum: "$items.addons.price" }
-          ]
-        }
-      }
+        "items.totalItemPrice": {
+          $add: ["$items.price", { $sum: "$items.addons.price" }],
+        },
+      },
     },
     {
       $group: {
         _id: "$items.productName",
         totalSold: { $sum: 1 },
-        totalRevenue: { $sum: "$itemTotalPrice" },
-        avgPrice: { $avg: "$itemTotalPrice" }
-      }
+        totalRevenue: { $sum: "$items.totalItemPrice" },
+      },
     },
-    {
-      $sort: { totalSold: -1 }
-    },
-    {
-      $limit: limit
-    },
-    {
-      $project: {
-        _id: 0,
-        productName: "$_id",
-        totalSold: 1,
-        totalRevenue: 1,
-        avgPrice: { $round: ["$avgPrice", 2] }
-      }
-    }
+    { $sort: { totalSold: -1 } },
   ]);
-  
-  // Format month for display
-  const months = [
-    "January", "February", "March", "April", "May", "June",
-    "July", "August", "September", "October", "November", "December"
-  ];
-  const monthName = months[monthParam - 1];
-  
-  // Check if export to CSV is requested
-  if (req.query.export === 'csv') {
-    const fields = ['productName', 'totalSold', 'totalRevenue', 'avgPrice'];
-    const json2csvParser = new Parser({ fields });
-    const csv = json2csvParser.parse(topProducts);
-    
-    res.header('Content-Type', 'text/csv');
-    res.attachment(`top_products_${monthName}_${yearParam}.csv`);
-    return res.send(csv);
-  }
-  
+
+  const topProducts = result.map(item => ({
+    productName: item._id,
+    totalSold: item.totalSold,
+    totalRevenue: item.totalRevenue,
+  }));
+
   res.status(200).json({
     success: true,
-    message: `Top ${limit} products sold in ${monthName} ${yearParam} fetched successfully`,
-    data: {
-      month: monthParam,
-      monthName,
-      year: yearParam,
-      products: topProducts
-    }
+    message: `Top products for ${month}/${year} fetched successfully`,
+    data: topProducts,
   });
 });
 
+
 export const getTopProductsByYear = asyncHandler(async (req, res, next) => {
-  // Get year from query or use current year
-  const yearParam = parseInt(req.query.year) || new Date().getFullYear();
-  
-  const yearStart = startOfYear(new Date(yearParam, 0));
-  const yearEnd = endOfYear(new Date(yearParam, 0));
-  
-  // Number of top products to return
-  const limit = parseInt(req.query.limit) || 10;
-  
-  // Get top products for the specified year
-  const topProducts = await Order.aggregate([
+  const year = parseInt(req.query.year) || new Date().getFullYear();
+  const start = new Date(`${year}-01-01`);
+  const end = new Date(`${year}-12-31`);
+
+  const result = await Order.aggregate([
     {
       $match: {
-        createdAt: { $gte: yearStart, $lte: yearEnd }
-      }
+        createdAt: { $gte: start, $lte: end },
+      },
     },
-    {
-      $unwind: "$items"
-    },
+    { $unwind: "$items" },
     {
       $addFields: {
-        "itemTotalPrice": {
-          $add: [
-            "$items.price",
-            { $sum: "$items.addons.price" }
-          ]
-        }
-      }
+        "items.totalItemPrice": {
+          $add: ["$items.price", { $sum: "$items.addons.price" }],
+        },
+      },
     },
     {
       $group: {
         _id: "$items.productName",
         totalSold: { $sum: 1 },
-        totalRevenue: { $sum: "$itemTotalPrice" },
-        // Track monthly sales for trend analysis
-        monthlySales: { 
-          $push: { 
-            month: { $month: "$createdAt" }, 
-            qty: 1 
-          } 
-        }
-      }
+        totalRevenue: { $sum: "$items.totalItemPrice" },
+      },
     },
-    {
-      $sort: { totalSold: -1 }
-    },
-    {
-      $limit: limit
-    },
-    {
-      $project: {
-        _id: 0,
-        productName: "$_id",
-        totalSold: 1,
-        totalRevenue: 1,
-        monthlySales: 1
-      }
-    }
+    { $sort: { totalSold: -1 } },
   ]);
-  
-  // Process the monthly sales data for each product
-  const processedProducts = topProducts.map(product => {
-    // Create a month-by-month breakdown
-    const monthlySalesData = Array.from({ length: 12 }, (_, i) => {
-      const month = i + 1;
-      const monthSales = product.monthlySales.filter(sale => sale.month === month);
-      return {
-        month,
-        monthName: new Date(2000, i).toLocaleString('default', { month: 'short' }),
-        sales: monthSales.length
-      };
-    });
-    
-    return {
-      productName: product.productName,
-      totalSold: product.totalSold,
-      totalRevenue: product.totalRevenue,
-      monthlySalesData
-    };
-  });
-  
-  // Check if export to CSV is requested
-  if (req.query.export === 'csv') {
-    // For CSV, flatten the data structure for easier reading
-    const csvData = [];
-    
-    processedProducts.forEach(product => {
-      product.monthlySalesData.forEach(monthData => {
-        csvData.push({
-          productName: product.productName,
-          year: yearParam,
-          month: monthData.monthName,
-          sales: monthData.sales,
-          totalRevenue: product.totalRevenue,
-          totalSoldYearly: product.totalSold
-        });
-      });
-    });
-    
-    const fields = ['productName', 'year', 'month', 'sales', 'totalSoldYearly', 'totalRevenue'];
-    const json2csvParser = new Parser({ fields });
-    const csv = json2csvParser.parse(csvData);
-    
-    res.header('Content-Type', 'text/csv');
-    res.attachment(`top_products_${yearParam}.csv`);
-    return res.send(csv);
-  }
-  
+
+  const topProducts = result.map(item => ({
+    productName: item._id,
+    totalSold: item.totalSold,
+    totalRevenue: item.totalRevenue,
+  }));
+
   res.status(200).json({
     success: true,
-    message: `Top ${limit} products sold in ${yearParam} fetched successfully`,
-    data: {
-      year: yearParam,
-      products: processedProducts
-    }
+    message: `Top products for ${year} fetched successfully`,
+    data: topProducts,
   });
 });
+
 
 export const getProductTrends = asyncHandler(async (req, res, next) => {
   // Get the product name from query parameters
