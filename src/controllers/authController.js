@@ -189,7 +189,7 @@ export const requestResetPassword = asyncHandler(async(req, res, next) => {
     await sendEmail({
       to: email,
       subject: "Reset Password Link",
-      html: `<p>${resetPasswordToken.token}</p>`
+      html: `<p>http://localhost:5174/resetpassword?token=${resetPasswordToken.token}</p>`
     });
 
     return {
